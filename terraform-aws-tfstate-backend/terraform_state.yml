@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Deploy Terraform for S3 and DynamoDB infrastructure for TFState file maintenance.
+
+  This template creates an S3 bucket and DynamoDB table to store Terraform state files.
+
+Parameters:
+  TerraformStateBucketName:
+    Type: String
+    Default: terraform-state
+    Description: |
+      Name of the S3 bucket to store Terraform State files. 
+  IncludeAccountIdAndStackNameAsPrefix:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: |
+      If set to "true", the AWS account ID and stack name will be included as part of the S3 bucket name prefix.
+  TerraformStateLockTableName:
+    Type: String
+    Default: terraform-state-lock-table
+    Description: |
+      Name of the Terraform DynamoDB lock table where lockid for tfstate file will be stored
+Conditions:
+  IncludeAccountIdAndStackNameAsPrefix:
+    Fn::Equals:
+      - !Ref IncludeAccountIdAndStackNameAsPrefix
+      - "true"      
+
+Resources:
+  TerraformStateBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !If
+        - IncludeAccountIdAndStackNameAsPrefix
+        - !Sub "${TerraformStateBucketName}-${AWS::StackName}-${AWS::AccountId}"
+        - !Ref TerraformStateBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: delete-after
+            Status: Enabled
+            ExpirationInDays: 365
+
+  TerraformStateLockTable:
+    Type: 'AWS::DynamoDB::Table'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref TerraformStateLockTableName
+      AttributeDefinitions:
+        - AttributeName: LockID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: LockID
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST

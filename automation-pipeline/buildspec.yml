@@ -1,0 +1,46 @@
+# Improved YAML configuration
+
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      java: ${java_version}
+    commands:
+      - echo "Installing dependencies..."
+      - yum install -y at-spi2-atk.x86_64
+      - echo "Installing Google Chrome..."
+      - wget ${chrome_download_url}
+
+  pre_build:
+    commands:
+      - echo "Starting Xvfb"
+      - export DISPLAY=:0.0
+      - Xvfb :0 -ac -screen 0 1024x768x24 &
+
+  build:
+    commands:
+      - echo "Running Selenium tests..."
+      - mvn test
+
+  post_build:
+    commands:
+      - echo "Generating test report..."
+      - REPORT_FOLDER=Selenium_test/test-output/ExecutionReport.html
+      - aws s3 cp "Selenium_test/test-output/ExecutionReport.html" "s3://${S3_Bucket}/SeleniumTest/Reports/ExecutionReport.html"
+      - echo "Copied successful"
+      - TARGET_URL=$(aws s3 presign "s3://${S3_Bucket}/SeleniumTest/Reports/ExecutionReport.html" --expires-in 3600 --region us-east-1)
+      - echo $TARGET_URL
+      - |
+        echo "BUILD_STATUS = $BUILD_STATUS"
+        # Determine Slack message and webhook secret
+        if [ "${BUILD_STATUS:-1}" -ne 0 ]; then
+          SLACK_MESSAGE=":x: Selenium tests failed! To see the report click <$TARGET_URL|here>"
+        else
+          SLACK_MESSAGE=":white_check_mark: Selenium tests succeeded! Report available at <$TARGET_URL|here>"
+        fi
+        SLACK_WEBHOOK_SECRET=$(aws secretsmanager get-secret-value --secret-id webhookurl-selenium  | jq -r '.SecretString | fromjson | .WEBHOOK_URL')
+        # Send message to Slack
+        curl -X POST -H 'Content-type: application/json' --data "{\"text\": \"$SLACK_MESSAGE\"}" $SLACK_WEBHOOK_SECRET
+artifacts:
+  files:
+    - '**/*'
